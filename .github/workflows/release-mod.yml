@@ -1,0 +1,202 @@
+name: Release Mod
+
+on:
+  workflow_call:
+    inputs:
+      version_info_path:
+        description: Optional path to VersionInfo.cs. Auto-detected when empty.
+        required: false
+        type: string
+        default: ''
+      mod_path:
+        description: Optional path to the MOD directory. Auto-detected from VersionInfo.Name when empty.
+        required: false
+        type: string
+        default: ''
+      docs:
+        description: Space-separated root document files to include in the release package.
+        required: false
+        type: string
+        default: README.md README_en.md CHANGELOG.md LICENSE.txt LICENSE
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Auto-detect configuration from C#
+        id: auto_config
+        shell: bash
+        env:
+          VERSION_INFO_PATH: ${{ inputs.version_info_path }}
+          INPUT_MOD_PATH: ${{ inputs.mod_path }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$VERSION_INFO_PATH" ]; then
+            CS_FILE="$VERSION_INFO_PATH"
+          else
+            CS_FILE=$(find . -name "VersionInfo.cs" -not -path "./.git/*" -print -quit)
+          fi
+
+          if [ -z "${CS_FILE:-}" ] || [ ! -f "$CS_FILE" ]; then
+            echo "VersionInfo.cs not found"
+            exit 1
+          fi
+
+          RAW_NAME=$(grep 'const string Name' "$CS_FILE" | sed -E 's/.*Name\s*=\s*"(.*)";.*/\1/')
+          MOD_NAME=$(echo "$RAW_NAME" | xargs)
+
+          RAW_VERSION=$(grep 'const string Version' "$CS_FILE" | sed -E 's/.*Version\s*=\s*"(.*)";.*/\1/')
+          MOD_VERSION=$(echo "$RAW_VERSION" | xargs)
+
+          if [ -z "$MOD_NAME" ] || [ -z "$MOD_VERSION" ]; then
+            echo "Failed to read Name or Version from $CS_FILE"
+            exit 1
+          fi
+
+          if [ -n "$INPUT_MOD_PATH" ]; then
+            TARGET_DIR="$INPUT_MOD_PATH"
+          else
+            TARGET_DIR=$(find . -maxdepth 2 -type d -name "$MOD_NAME" -not -path "*/.*" -print -quit)
+          fi
+
+          if [ -z "${TARGET_DIR:-}" ] || [ ! -d "$TARGET_DIR" ]; then
+            echo "MOD directory not found for $MOD_NAME"
+            exit 1
+          fi
+
+          echo "MOD_PATH=$TARGET_DIR" >> "$GITHUB_ENV"
+          echo "VERSION=$MOD_VERSION" >> "$GITHUB_ENV"
+          echo "ZIP_FILENAME=${MOD_NAME}_${MOD_VERSION}.zip" >> "$GITHUB_ENV"
+          echo "mod_path=$TARGET_DIR" >> "$GITHUB_OUTPUT"
+          echo "version=$MOD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "zip_filename=${MOD_NAME}_${MOD_VERSION}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Find previous tag
+        id: prev_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CURRENT_TAG="${{ github.ref_name }}"
+          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | grep -A 1 "^${CURRENT_TAG}$" | tail -n 1)
+
+          if [ "$PREV_TAG" != "$CURRENT_TAG" ] && [ -n "$PREV_TAG" ]; then
+            echo "Found previous tag: $PREV_TAG"
+            echo "PREV_TAG=$PREV_TAG" >> "$GITHUB_ENV"
+            echo "prev_tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "No previous tag found (initial release)."
+            echo "prev_tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract changelog and title
+        id: changelog_reader
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const version = process.env.VERSION;
+            const prevTag = process.env.PREV_TAG;
+            const currentTag = context.ref.replace('refs/tags/', '');
+            const repoUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
+
+            const changelogPath = './CHANGELOG.md';
+            let releaseTitle = `[${version}]`;
+            let notes = '';
+
+            if (fs.existsSync(changelogPath)) {
+              const content = fs.readFileSync(changelogPath, 'utf8');
+              const lines = content.split('\n');
+              const extract = [];
+              let isRecording = false;
+
+              const escapedVersion = version.replace(/\./g, '\\.');
+              const targetHeaderRegex = new RegExp(`^##\\s+\\[${escapedVersion}\\]`);
+              const anyHeaderRegex = /^##\s+\[/;
+
+              for (const line of lines) {
+                if (isRecording && anyHeaderRegex.test(line)) break;
+                if (isRecording) extract.push(line);
+                if (!isRecording && targetHeaderRegex.test(line)) {
+                  isRecording = true;
+                  releaseTitle = line.replace(/^##\s+/, '').trim();
+                }
+              }
+
+              notes = extract.join('\n').trim();
+            }
+
+            if (!notes) {
+              notes = `Release v${version}`;
+              if (releaseTitle === `[${version}]`) releaseTitle = `v${version}`;
+            }
+
+            if (prevTag) {
+              const compareUrl = `${repoUrl}/compare/${prevTag}...${currentTag}`;
+              notes += `\n\n**Full Changelog**: ${compareUrl}`;
+            }
+
+            core.setOutput('title', releaseTitle);
+            core.setOutput('notes', notes);
+        env:
+          VERSION: ${{ steps.auto_config.outputs.version }}
+          PREV_TAG: ${{ steps.prev_tag.outputs.prev_tag }}
+
+      - name: Prepare and zip
+        shell: bash
+        env:
+          DOC_FILES: ${{ inputs.docs }}
+          MOD_PATH: ${{ steps.auto_config.outputs.mod_path }}
+          ZIP_FILENAME: ${{ steps.auto_config.outputs.zip_filename }}
+        run: |
+          set -euo pipefail
+
+          STAGING_DIR="temp_staging"
+          mkdir -p "$STAGING_DIR"
+
+          FOLDER_NAME=$(basename "$MOD_PATH")
+          TARGET_DIR="$STAGING_DIR/$FOLDER_NAME"
+          mkdir -p "$TARGET_DIR"
+
+          echo "Creating staging area for STS2 Mod..."
+
+          PUBLISH_SRC="$MOD_PATH/modPublish"
+          if [ -d "$PUBLISH_SRC" ]; then
+            cp -r "$PUBLISH_SRC/." "$TARGET_DIR/"
+            echo "Copied contents from $PUBLISH_SRC"
+          else
+            echo "Error: publish folder not found at $PUBLISH_SRC"
+            exit 1
+          fi
+
+          echo "Injecting documents into package..."
+          for file in $DOC_FILES; do
+            if [ -f "$file" ]; then
+              cp "$file" "$TARGET_DIR/"
+              echo "Included: $file"
+            fi
+          done
+
+          cd "$STAGING_DIR"
+          zip -r "${{ github.workspace }}/$ZIP_FILENAME" "$FOLDER_NAME"
+          echo "Zip created: $ZIP_FILENAME"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.auto_config.outputs.zip_filename }}
+          name: ${{ steps.changelog_reader.outputs.title }}
+          body: ${{ steps.changelog_reader.outputs.notes }}
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

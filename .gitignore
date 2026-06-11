@@ -1,0 +1,18 @@
+# Local workflow artifacts
+.cloc-files.txt
+.cloc-report.json
+temp_staging/
+*.zip
+
+# Editors
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and environment
+*.log
+.env
+.env.*
