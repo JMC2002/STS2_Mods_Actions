@@ -164,6 +164,10 @@ jobs:
             }
 
             $text = Get-Content -Path $readmePath -Raw
+            if ($null -eq $text) {
+              $text = ""
+            }
+
             $isEnglish = $readmePath -like "*_en.md"
             $lines = New-Object System.Collections.Generic.List[string]
             $lines.Add($env:CODE_STATS_BEGIN)
