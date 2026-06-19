@@ -1,0 +1,350 @@
+name: Publish Steam Workshop Mod
+
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        description: JSON array for the runner. Use a runner that can initialize Steam.
+        required: false
+        type: string
+        default: '["ubuntu-latest"]'
+      uploader_version:
+        description: sts2-mod-uploader release tag used when no local archive is configured.
+        required: false
+        type: string
+        default: v0.1.0
+      uploader_platform:
+        description: sts2-mod-uploader release platform suffix used when no local archive is configured.
+        required: false
+        type: string
+        default: linux-x64
+      uploader_path:
+        description: Existing ModUploader executable path on the runner. Skips archive setup when set.
+        required: false
+        type: string
+        default: ''
+      uploader_archive_path:
+        description: Optional ModUploader zip path. Relative to uploader_archive_repository checkout, or caller repository when uploader_archive_repository is empty.
+        required: false
+        type: string
+        default: ''
+      uploader_archive_repository:
+        description: Repository that stores uploader_archive_path. Leave empty to read from the caller repository.
+        required: false
+        type: string
+        default: JMC2002/STS2_Mods_Actions
+      uploader_archive_ref:
+        description: Ref used when checking out uploader_archive_repository.
+        required: false
+        type: string
+        default: main
+      workshop_workspace:
+        description: Workshop workspace path in the repository. Defaults to .github/workshop/<VersionInfo.Name>.
+        required: false
+        type: string
+        default: ''
+      version_info_path:
+        description: Optional path to VersionInfo.cs. Auto-detected when empty.
+        required: false
+        type: string
+        default: ''
+      mod_path:
+        description: Optional path to the MOD directory. Auto-detected from VersionInfo.Name when empty.
+        required: false
+        type: string
+        default: ''
+      changelog_path:
+        description: Changelog path used to derive the Steam Workshop change note.
+        required: false
+        type: string
+        default: CHANGELOG.md
+      change_note:
+        description: Explicit Steam Workshop change note. Auto-detected from CHANGELOG.md when empty.
+        required: false
+        type: string
+        default: ''
+      workshop_id:
+        description: Optional Workshop item ID. Defaults to mod_id.txt in the workspace.
+        required: false
+        type: string
+        default: ''
+      dry_run:
+        description: Prepare the uploader workspace without calling ModUploader upload.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish-workshop:
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout uploader archive repository
+        if: ${{ !inputs.dry_run && inputs.uploader_path == '' && inputs.uploader_archive_path != '' && inputs.uploader_archive_repository != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.uploader_archive_repository }}
+          ref: ${{ inputs.uploader_archive_ref }}
+          path: __sts2_actions_uploader
+
+      - name: Prepare ModUploader
+        if: ${{ !inputs.dry_run && inputs.uploader_path == '' }}
+        shell: pwsh
+        env:
+          UPLOADER_VERSION: ${{ inputs.uploader_version }}
+          UPLOADER_PLATFORM: ${{ inputs.uploader_platform }}
+          UPLOADER_ARCHIVE_PATH: ${{ inputs.uploader_archive_path }}
+          UPLOADER_ARCHIVE_REPOSITORY: ${{ inputs.uploader_archive_repository }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $extractDir = Join-Path $env:RUNNER_TEMP "sts2-mod-uploader"
+          if (Test-Path -LiteralPath $extractDir) {
+            Remove-Item -LiteralPath $extractDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+
+          if (-not [string]::IsNullOrWhiteSpace($env:UPLOADER_ARCHIVE_PATH)) {
+            if ([string]::IsNullOrWhiteSpace($env:UPLOADER_ARCHIVE_REPOSITORY)) {
+              $archivePath = Join-Path $env:GITHUB_WORKSPACE $env:UPLOADER_ARCHIVE_PATH
+            } else {
+              $archivePath = Join-Path (Join-Path $env:GITHUB_WORKSPACE "__sts2_actions_uploader") $env:UPLOADER_ARCHIVE_PATH
+            }
+          } else {
+            $asset = "ModUploader-$($env:UPLOADER_PLATFORM).zip"
+            $archivePath = Join-Path $env:RUNNER_TEMP $asset
+            $url = "https://github.com/megacrit/sts2-mod-uploader/releases/download/$($env:UPLOADER_VERSION)/$asset"
+            Invoke-WebRequest -Uri $url -OutFile $archivePath
+          }
+
+          if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
+            throw "ModUploader archive not found at '$archivePath'."
+          }
+
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $extractDir -Force
+
+          $linuxExecutable = Join-Path $extractDir "ModUploader"
+          if (Test-Path -LiteralPath $linuxExecutable -PathType Leaf) {
+            $chmod = Get-Command chmod -ErrorAction SilentlyContinue
+            if ($null -ne $chmod) {
+              & chmod +x $linuxExecutable
+            }
+          }
+
+      - name: Resolve uploader path
+        id: uploader
+        if: ${{ !inputs.dry_run }}
+        shell: pwsh
+        env:
+          INPUT_UPLOADER_PATH: ${{ inputs.uploader_path }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:INPUT_UPLOADER_PATH)) {
+            $candidates = @(
+              (Join-Path $env:RUNNER_TEMP "sts2-mod-uploader/ModUploader"),
+              (Join-Path $env:RUNNER_TEMP "sts2-mod-uploader/ModUploader.exe")
+            )
+            $uploaderPath = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          } else {
+            $uploaderPath = $env:INPUT_UPLOADER_PATH
+          }
+
+          if ([string]::IsNullOrWhiteSpace($uploaderPath) -or -not (Test-Path -LiteralPath $uploaderPath -PathType Leaf)) {
+            throw "ModUploader executable not found."
+          }
+
+          "path=$uploaderPath" >> $env:GITHUB_OUTPUT
+
+      - name: Detect STS2 mod configuration
+        id: config
+        shell: pwsh
+        env:
+          VERSION_INFO_PATH: ${{ inputs.version_info_path }}
+          INPUT_MOD_PATH: ${{ inputs.mod_path }}
+          INPUT_WORKSHOP_WORKSPACE: ${{ inputs.workshop_workspace }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:VERSION_INFO_PATH)) {
+            $csFile = Get-ChildItem -LiteralPath $PWD -Recurse -Filter VersionInfo.cs -File |
+              Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]__sts2_actions_uploader[\\/]' } |
+              Select-Object -First 1
+          } else {
+            $csFile = Get-Item -LiteralPath $env:VERSION_INFO_PATH
+          }
+
+          if ($null -eq $csFile -or -not (Test-Path -LiteralPath $csFile.FullName -PathType Leaf)) {
+            throw "VersionInfo.cs not found."
+          }
+
+          $content = Get-Content -LiteralPath $csFile.FullName -Raw
+          $nameMatch = [Regex]::Match($content, 'const\s+string\s+Name\s*=\s*"([^"]+)"')
+          $versionMatch = [Regex]::Match($content, 'const\s+string\s+Version\s*=\s*"([^"]+)"')
+
+          if (-not $nameMatch.Success -or -not $versionMatch.Success) {
+            throw "Failed to read Name or Version from '$($csFile.FullName)'."
+          }
+
+          $modName = $nameMatch.Groups[1].Value.Trim()
+          $version = $versionMatch.Groups[1].Value.Trim()
+
+          if ([string]::IsNullOrWhiteSpace($env:INPUT_MOD_PATH)) {
+            $modDir = Get-ChildItem -LiteralPath $PWD -Directory -Recurse -Depth 1 |
+              Where-Object { $_.Name -eq $modName -and $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]__sts2_actions_uploader[\\/]' } |
+              Select-Object -First 1
+          } else {
+            $modDir = Get-Item -LiteralPath $env:INPUT_MOD_PATH
+          }
+
+          if ($null -eq $modDir -or -not (Test-Path -LiteralPath $modDir.FullName -PathType Container)) {
+            throw "MOD directory not found for '$modName'."
+          }
+
+          $publishPath = Join-Path $modDir.FullName "modPublish"
+          if (-not (Test-Path -LiteralPath $publishPath -PathType Container)) {
+            throw "Publish directory not found at '$publishPath'."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:INPUT_WORKSHOP_WORKSPACE)) {
+            $workshopWorkspace = Join-Path (Join-Path $PWD ".github/workshop") $modName
+          } else {
+            $workshopWorkspace = $env:INPUT_WORKSHOP_WORKSPACE
+          }
+
+          if (-not (Test-Path -LiteralPath $workshopWorkspace -PathType Container)) {
+            throw "Workshop workspace not found at '$workshopWorkspace'. Add workshop.json, image.png, and mod_id.txt under .github/workshop/$modName or pass workshop_workspace."
+          }
+
+          "mod_name=$modName" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "mod_path=$($modDir.FullName)" >> $env:GITHUB_OUTPUT
+          "publish_path=$publishPath" >> $env:GITHUB_OUTPUT
+          "workshop_workspace=$workshopWorkspace" >> $env:GITHUB_OUTPUT
+
+      - name: Prepare uploader workspace
+        id: prepare
+        shell: pwsh
+        env:
+          PUBLISH_PATH: ${{ steps.config.outputs.publish_path }}
+          WORKSHOP_WORKSPACE: ${{ steps.config.outputs.workshop_workspace }}
+          VERSION: ${{ steps.config.outputs.version }}
+          CHANGELOG_PATH: ${{ inputs.changelog_path }}
+          INPUT_CHANGE_NOTE: ${{ inputs.change_note }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Get-ChangelogNote([string]$path, [string]$version) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              return ""
+            }
+
+            $content = Get-Content -LiteralPath $path -Raw
+            if ($null -eq $content) {
+              return ""
+            }
+
+            $escapedVersion = [Regex]::Escape($version)
+            $targetHeader = "^\s*##\s+\[v?$escapedVersion\]"
+            $anyHeader = "^\s*##\s+\["
+            $lines = $content -split "`r?`n"
+            $recording = $false
+            $extract = New-Object System.Collections.Generic.List[string]
+
+            foreach ($line in $lines) {
+              if ($recording -and $line -match $anyHeader) {
+                break
+              }
+
+              if ($recording) {
+                $extract.Add($line)
+              }
+
+              if (-not $recording -and $line -match $targetHeader) {
+                $recording = $true
+              }
+            }
+
+            return ($extract -join [Environment]::NewLine).Trim()
+          }
+
+          $contentDir = Join-Path $env:WORKSHOP_WORKSPACE "content"
+          if (Test-Path -LiteralPath $contentDir -PathType Container) {
+            Get-ChildItem -LiteralPath $contentDir -Force | Remove-Item -Recurse -Force
+          } else {
+            New-Item -ItemType Directory -Force -Path $contentDir | Out-Null
+          }
+
+          Get-ChildItem -LiteralPath $env:PUBLISH_PATH -Force | Copy-Item -Destination $contentDir -Recurse -Force
+
+          $workshopJsonPath = Join-Path $env:WORKSHOP_WORKSPACE "workshop.json"
+          if (-not (Test-Path -LiteralPath $workshopJsonPath -PathType Leaf)) {
+            throw "workshop.json not found at '$workshopJsonPath'."
+          }
+
+          $changeNote = $env:INPUT_CHANGE_NOTE
+          if ([string]::IsNullOrWhiteSpace($changeNote)) {
+            $changeNote = Get-ChangelogNote $env:CHANGELOG_PATH $env:VERSION
+          }
+
+          if ([string]::IsNullOrWhiteSpace($changeNote)) {
+            $changeNote = "Release v$($env:VERSION)"
+          }
+
+          $workshopJson = Get-Content -LiteralPath $workshopJsonPath -Raw | ConvertFrom-Json
+          if ($workshopJson.PSObject.Properties.Name -contains "changeNote") {
+            $workshopJson.changeNote = $changeNote
+          } else {
+            $workshopJson | Add-Member -NotePropertyName changeNote -NotePropertyValue $changeNote
+          }
+          $workshopJson | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $workshopJsonPath -Encoding utf8
+
+          $delimiter = "EOF_$([Guid]::NewGuid().ToString('N'))"
+          "change_note<<$delimiter" >> $env:GITHUB_OUTPUT
+          $changeNote >> $env:GITHUB_OUTPUT
+          $delimiter >> $env:GITHUB_OUTPUT
+
+      - name: Upload to Steam Workshop
+        if: ${{ !inputs.dry_run }}
+        shell: pwsh
+        env:
+          UPLOADER_PATH: ${{ steps.uploader.outputs.path }}
+          WORKSHOP_WORKSPACE: ${{ steps.config.outputs.workshop_workspace }}
+          WORKSHOP_ID: ${{ inputs.workshop_id }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $arguments = @("upload", "--workspace", $env:WORKSHOP_WORKSPACE)
+          if (-not [string]::IsNullOrWhiteSpace($env:WORKSHOP_ID)) {
+            $arguments += @("--id", $env:WORKSHOP_ID)
+          }
+
+          $uploaderDir = Split-Path -Parent $env:UPLOADER_PATH
+          Push-Location -LiteralPath $uploaderDir
+          try {
+            & $env:UPLOADER_PATH @arguments
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Dry run summary
+        if: ${{ inputs.dry_run }}
+        shell: pwsh
+        env:
+          WORKSHOP_WORKSPACE: ${{ steps.config.outputs.workshop_workspace }}
+          CHANGE_NOTE: ${{ steps.prepare.outputs.change_note }}
+        run: |
+          Write-Host "Dry run enabled. Prepared '$env:WORKSHOP_WORKSPACE' but did not upload."
+          Write-Host "Change note:"
+          Write-Host $env:CHANGE_NOTE
