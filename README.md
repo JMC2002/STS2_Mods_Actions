@@ -152,3 +152,86 @@ jobs:
       workshop_id: '3747533700'
       dry_run: false
 ```
+
+## Quark Drive wrapper
+
+在子 MOD 仓库根目录提交 `quark.json`：
+
+```json
+{
+  "folderId": "夸克MOD发布文件夹ID",
+  "historyFolderId": "历史版本文件夹ID",
+  "historyFolderName": "历史版本"
+}
+```
+
+`folderId` / `historyFolderId` 不是登录凭证，可以放仓库里；夸克登录态必须放 GitHub Actions Secret：
+
+```powershell
+gh secret set QUARK_COOKIE --repo JMC2002/SlayTheSpire2_QuickSL
+```
+
+在子 MOD 的 release wrapper 中追加一个发布夸克网盘的 job：
+
+```yaml
+name: Release Mod
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: JMC2002/STS2_Mods_Actions/.github/workflows/release-mod.yml@main
+
+  publish-quark:
+    needs: release
+    uses: JMC2002/STS2_Mods_Actions/.github/workflows/publish-quark.yml@main
+    secrets:
+      quark_cookie: ${{ secrets.QUARK_COOKIE }}
+```
+
+默认行为：
+
+- 自动寻找 `VersionInfo.cs`，读取 `Name` 和 `Version`
+- 按 MOD 名称寻找发布目录
+- 按 GitHub Release 同样规则打包 `<Name>_<Version>.zip`
+- 读取仓库根目录 `quark.json`
+- 将夸克目标文件夹中的现有 `.zip` 移动到 `historyFolderId`
+- 上传新 zip 到 `folderId`
+- 上传后再次列目录校验文件存在
+
+这个 workflow 使用 Rust 版 `quarkpan` CLI 上传文件，并用夸克网盘的 `file/move` API 归档旧版本。正式启用前可以先 dry run：
+
+```yaml
+jobs:
+  publish-quark:
+    needs: release
+    uses: JMC2002/STS2_Mods_Actions/.github/workflows/publish-quark.yml@main
+    with:
+      dry_run: true
+    secrets:
+      quark_cookie: ${{ secrets.QUARK_COOKIE }}
+```
+
+可选参数：
+
+```yaml
+jobs:
+  publish-quark:
+    needs: release
+    uses: JMC2002/STS2_Mods_Actions/.github/workflows/publish-quark.yml@main
+    with:
+      version_info_path: ./Core/VersionInfo.cs
+      mod_path: ./QuickSL
+      quark_config_path: quark.json
+      move_existing_zip: true
+      quarkpan_version: 0.4.0
+      dry_run: false
+    secrets:
+      quark_cookie: ${{ secrets.QUARK_COOKIE }}
+```

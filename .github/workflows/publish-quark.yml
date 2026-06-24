@@ -1,0 +1,263 @@
+name: Publish Quark Drive Mod
+
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        description: JSON array for the runner.
+        required: false
+        type: string
+        default: '["ubuntu-latest"]'
+      version_info_path:
+        description: Optional path to VersionInfo.cs. Auto-detected when empty.
+        required: false
+        type: string
+        default: ''
+      mod_path:
+        description: Optional path to the MOD directory. Auto-detected from VersionInfo.Name when empty.
+        required: false
+        type: string
+        default: ''
+      docs:
+        description: Space-separated root document files to include in the uploaded package.
+        required: false
+        type: string
+        default: README.md README_en.md CHANGELOG.md LICENSE.txt LICENSE
+      quark_config_path:
+        description: Path to quark.json in the caller repository.
+        required: false
+        type: string
+        default: quark.json
+      move_existing_zip:
+        description: Move existing zip files in the Quark target folder to the history folder before upload.
+        required: false
+        type: boolean
+        default: true
+      quarkpan_version:
+        description: Rust quarkpan CLI version from crates.io.
+        required: false
+        type: string
+        default: 0.4.0
+      dry_run:
+        description: Prepare and validate without moving or uploading files.
+        required: false
+        type: boolean
+        default: false
+      actions_repository:
+        description: Repository containing helper scripts.
+        required: false
+        type: string
+        default: JMC2002/STS2_Mods_Actions
+      actions_ref:
+        description: Ref used when checking out actions_repository for helper scripts.
+        required: false
+        type: string
+        default: main
+    secrets:
+      quark_cookie:
+        description: Quark Drive Cookie request header value without the Cookie prefix.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish-quark:
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout STS2 actions helpers
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.actions_repository }}
+          ref: ${{ inputs.actions_ref }}
+          path: __sts2_actions
+
+      - name: Detect STS2 mod configuration
+        id: config
+        shell: bash
+        env:
+          VERSION_INFO_PATH: ${{ inputs.version_info_path }}
+          INPUT_MOD_PATH: ${{ inputs.mod_path }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$VERSION_INFO_PATH" ]; then
+            CS_FILE="$VERSION_INFO_PATH"
+          else
+            CS_FILE=$(find . -name "VersionInfo.cs" -not -path "./.git/*" -not -path "./__sts2_actions/*" -print -quit)
+          fi
+
+          if [ -z "${CS_FILE:-}" ] || [ ! -f "$CS_FILE" ]; then
+            echo "VersionInfo.cs not found"
+            exit 1
+          fi
+
+          RAW_NAME=$(grep 'const string Name' "$CS_FILE" | sed -E 's/.*Name\s*=\s*"(.*)";.*/\1/')
+          MOD_NAME=$(echo "$RAW_NAME" | xargs)
+
+          RAW_VERSION=$(grep 'const string Version' "$CS_FILE" | sed -E 's/.*Version\s*=\s*"(.*)";.*/\1/')
+          MOD_VERSION=$(echo "$RAW_VERSION" | xargs)
+
+          if [ -z "$MOD_NAME" ] || [ -z "$MOD_VERSION" ]; then
+            echo "Failed to read Name or Version from $CS_FILE"
+            exit 1
+          fi
+
+          if [ -n "$INPUT_MOD_PATH" ]; then
+            TARGET_DIR="$INPUT_MOD_PATH"
+          else
+            TARGET_DIR=$(find . -maxdepth 2 -type d -name "$MOD_NAME" -not -path "*/.*" -not -path "./__sts2_actions/*" -print -quit)
+          fi
+
+          if [ -z "${TARGET_DIR:-}" ] || [ ! -d "$TARGET_DIR" ]; then
+            echo "MOD directory not found for $MOD_NAME"
+            exit 1
+          fi
+
+          PUBLISH_SRC="$TARGET_DIR/modPublish"
+          if [ ! -d "$PUBLISH_SRC" ]; then
+            echo "Error: publish folder not found at $PUBLISH_SRC"
+            exit 1
+          fi
+
+          echo "mod_name=$MOD_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$MOD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "mod_path=$TARGET_DIR" >> "$GITHUB_OUTPUT"
+          echo "zip_filename=${MOD_NAME}_${MOD_VERSION}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare zip package
+        shell: bash
+        env:
+          DOC_FILES: ${{ inputs.docs }}
+          MOD_PATH: ${{ steps.config.outputs.mod_path }}
+          ZIP_FILENAME: ${{ steps.config.outputs.zip_filename }}
+        run: |
+          set -euo pipefail
+
+          STAGING_DIR="temp_staging_quark"
+          rm -rf "$STAGING_DIR"
+          mkdir -p "$STAGING_DIR"
+
+          FOLDER_NAME=$(basename "$MOD_PATH")
+          TARGET_DIR="$STAGING_DIR/$FOLDER_NAME"
+          mkdir -p "$TARGET_DIR"
+
+          cp -r "$MOD_PATH/modPublish/." "$TARGET_DIR/"
+
+          for file in $DOC_FILES; do
+            if [ -f "$file" ]; then
+              cp "$file" "$TARGET_DIR/"
+              echo "Included: $file"
+            fi
+          done
+
+          cd "$STAGING_DIR"
+          zip -r "${{ github.workspace }}/$ZIP_FILENAME" "$FOLDER_NAME"
+          echo "Zip created: $ZIP_FILENAME"
+
+      - name: Validate Quark config
+        shell: bash
+        env:
+          QUARK_CONFIG_PATH: ${{ inputs.quark_config_path }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "$QUARK_CONFIG_PATH" ]; then
+            echo "Quark config not found at $QUARK_CONFIG_PATH"
+            exit 1
+          fi
+
+          python -m json.tool "$QUARK_CONFIG_PATH" >/dev/null
+
+      - name: Write Quark cookie file
+        shell: bash
+        env:
+          QUARK_COOKIE: ${{ secrets.quark_cookie }}
+        run: |
+          set -euo pipefail
+
+          COOKIE_FILE="$RUNNER_TEMP/quark_cookie.txt"
+          printf '%s' "$QUARK_COOKIE" > "$COOKIE_FILE"
+          chmod 600 "$COOKIE_FILE"
+          echo "QUARK_COOKIE_FILE=$COOKIE_FILE" >> "$GITHUB_ENV"
+
+      - name: Install quarkpan CLI
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          QUARKPAN_VERSION: ${{ inputs.quarkpan_version }}
+        run: |
+          set -euo pipefail
+
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+
+          rustup update stable
+          cargo install quarkpan --version "$QUARKPAN_VERSION" --locked
+
+      - name: Archive existing Quark zip files
+        id: quark_preflight
+        shell: bash
+        env:
+          QUARK_CONFIG_PATH: ${{ inputs.quark_config_path }}
+          ZIP_FILENAME: ${{ steps.config.outputs.zip_filename }}
+          MOVE_EXISTING_ZIP: ${{ inputs.move_existing_zip }}
+        run: |
+          set -euo pipefail
+
+          DRY_RUN_ARG=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            DRY_RUN_ARG="--dry-run"
+          fi
+
+          python "__sts2_actions/scripts/quark_publish.py" preflight \
+            --cookie-file "$QUARK_COOKIE_FILE" \
+            --config "$QUARK_CONFIG_PATH" \
+            --zip-file "$ZIP_FILENAME" \
+            --move-existing "$MOVE_EXISTING_ZIP" \
+            $DRY_RUN_ARG
+
+      - name: Upload package to Quark
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          ZIP_FILENAME: ${{ steps.config.outputs.zip_filename }}
+          QUARK_FOLDER_ID: ${{ steps.quark_preflight.outputs.folder_id }}
+        run: |
+          set -euo pipefail
+
+          quarkpan --cookie-file "$QUARK_COOKIE_FILE" --no-progress upload \
+            --file "$ZIP_FILENAME" \
+            --pdir-fid "$QUARK_FOLDER_ID"
+
+      - name: Verify Quark upload
+        if: ${{ !inputs.dry_run }}
+        id: quark_verify
+        shell: bash
+        env:
+          QUARK_CONFIG_PATH: ${{ inputs.quark_config_path }}
+          ZIP_FILENAME: ${{ steps.config.outputs.zip_filename }}
+        run: |
+          set -euo pipefail
+
+          python "__sts2_actions/scripts/quark_publish.py" verify \
+            --cookie-file "$QUARK_COOKIE_FILE" \
+            --config "$QUARK_CONFIG_PATH" \
+            --zip-file "$ZIP_FILENAME"
+
+      - name: Dry run summary
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        env:
+          ZIP_FILENAME: ${{ steps.config.outputs.zip_filename }}
+        run: |
+          echo "Dry run enabled. Prepared $ZIP_FILENAME but did not upload to Quark."
