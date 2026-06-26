@@ -205,7 +205,7 @@ jobs:
 - 上传新 zip 到 `folderId`
 - 上传后再次列目录校验文件存在
 
-这个 workflow 使用 Rust 版 `quarkpan` CLI 上传文件，并用夸克网盘的 `file/move` API 归档旧版本。正式启用前可以先 dry run：
+这个 workflow 当前内部使用 Rust 版 `quarkpan` CLI 上传文件，并缓存 CLI 二进制以减少后续运行时间；子仓库只需要调用这个 reusable workflow，不需要关心内部上传实现。正式启用前可以先 dry run：
 
 ```yaml
 jobs:
@@ -230,7 +230,6 @@ jobs:
       mod_path: ./QuickSL
       quark_config_path: quark.json
       move_existing_zip: true
-      quarkpan_version: 0.4.0
       dry_run: false
     secrets:
       quark_cookie: ${{ secrets.QUARK_COOKIE }}

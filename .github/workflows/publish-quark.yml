@@ -33,11 +33,6 @@ on:
         required: false
         type: boolean
         default: true
-      quarkpan_version:
-        description: Rust quarkpan CLI version from crates.io.
-        required: false
-        type: string
-        default: 0.4.0
       dry_run:
         description: Prepare and validate without moving or uploading files.
         required: false
@@ -64,6 +59,8 @@ permissions:
 jobs:
   publish-quark:
     runs-on: ${{ fromJSON(inputs.runs_on) }}
+    env:
+      QUARKPAN_VERSION: 0.4.0
 
     steps:
       - name: Checkout caller repository
@@ -187,21 +184,34 @@ jobs:
           chmod 600 "$COOKIE_FILE"
           echo "QUARK_COOKIE_FILE=$COOKIE_FILE" >> "$GITHUB_ENV"
 
-      - name: Install quarkpan CLI
+      - name: Prepare quarkpan CLI cache path
         if: ${{ !inputs.dry_run }}
         shell: bash
-        env:
-          QUARKPAN_VERSION: ${{ inputs.quarkpan_version }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$HOME/.cargo/bin"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache quarkpan CLI
+        if: ${{ !inputs.dry_run }}
+        id: cache-quarkpan
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/quarkpan
+          key: quarkpan-${{ runner.os }}-${{ runner.arch }}-${{ env.QUARKPAN_VERSION }}
+
+      - name: Install quarkpan CLI
+        if: ${{ !inputs.dry_run && steps.cache-quarkpan.outputs.cache-hit != 'true' }}
+        shell: bash
         run: |
           set -euo pipefail
 
           if ! command -v cargo >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
 
-          rustup update stable
           cargo install quarkpan --version "$QUARKPAN_VERSION" --locked
 
       - name: Archive existing Quark zip files
