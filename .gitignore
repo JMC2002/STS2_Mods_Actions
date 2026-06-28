@@ -7,6 +7,7 @@ temp_staging/
 # Editors
 .vscode/
 .idea/
+.vs/
 
 # OS files
 .DS_Store
