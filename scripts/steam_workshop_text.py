@@ -27,17 +27,21 @@ def write_text(path, content):
     file_path.write_text(content.rstrip() + "\n", encoding="utf-8")
 
 
-def extract_changelog_section(path, version):
+def extract_changelog_entry(path, version):
     content = read_text(path)
     if not content:
-        return ""
+        return {"section": "", "date": ""}
 
     escaped = re.escape(version)
-    target_header = re.compile(rf"^\s*##\s+(?:\[?v?{escaped}\]?)(?:\s|$)", re.IGNORECASE)
+    target_header = re.compile(
+        rf"^\s*##\s+(?:\[?v?{escaped}\]?)(?:\s*[-\u2013\u2014]\s*(?P<date>\d{{4}}[-/]\d{{1,2}}[-/]\d{{1,2}}))?(?:\s|$)",
+        re.IGNORECASE,
+    )
     any_version_header = re.compile(r"^\s*##\s+(?:\[?v?\d+(?:\.\d+)+\]?)(?:\s|$)", re.IGNORECASE)
     lines = content.splitlines()
     recording = False
     extracted = []
+    date = ""
 
     for line in lines:
         if recording and any_version_header.match(line):
@@ -47,10 +51,16 @@ def extract_changelog_section(path, version):
             extracted.append(line)
             continue
 
-        if target_header.match(line):
+        header_match = target_header.match(line)
+        if header_match:
             recording = True
+            date = header_match.group("date") or ""
 
-    return "\n".join(extracted).strip()
+    return {"section": "\n".join(extracted).strip(), "date": date}
+
+
+def extract_changelog_section(path, version):
+    return extract_changelog_entry(path, version)["section"]
 
 
 def convert_inline(text):
@@ -177,8 +187,15 @@ def maybe_convert(text, enabled):
     return markdown_to_bbcode(text) if enabled else text.strip()
 
 
+def build_release_heading(version, date):
+    title = f"v{version}"
+    if date:
+        title += f" - {date}"
+    return f"[h1]{title}[/h1]"
+
+
 def normalize_change_note_language(value):
-    normalized = str(value or "auto").strip().lower()
+    normalized = str(value or "combined").strip().lower()
     aliases = {
         "auto": "auto",
         "en": "english",
@@ -202,26 +219,30 @@ def build_change_note(args):
     if args.change_note.strip():
         return maybe_convert(args.change_note, args.markdown_to_bbcode), ["Explicit input"]
 
-    zh_section = maybe_convert(extract_changelog_section(args.changelog_zh, args.version), args.markdown_to_bbcode)
-    en_section = maybe_convert(extract_changelog_section(args.changelog_en, args.version), args.markdown_to_bbcode)
+    zh_entry = extract_changelog_entry(args.changelog_zh, args.version)
+    en_entry = extract_changelog_entry(args.changelog_en, args.version)
+    changelog_date = zh_entry["date"] or en_entry["date"]
+    release_heading = build_release_heading(args.version, changelog_date)
+    zh_section = maybe_convert(zh_entry["section"], args.markdown_to_bbcode)
+    en_section = maybe_convert(en_entry["section"], args.markdown_to_bbcode)
     mode = normalize_change_note_language(args.change_note_language)
 
     if mode == "english":
         if en_section:
-            return en_section, ["English"]
-        return f"Release v{args.version}", []
+            return f"{release_heading}\n\n{en_section}", ["English"]
+        return release_heading, []
 
     if mode == "chinese":
         if zh_section:
-            return zh_section, ["Chinese"]
-        return f"Release v{args.version}", []
+            return f"{release_heading}\n\n{zh_section}", ["Chinese"]
+        return release_heading, []
 
     if mode == "auto":
         if en_section:
-            return en_section, ["English"]
+            return f"{release_heading}\n\n{en_section}", ["English"]
         if zh_section:
-            return zh_section, ["Chinese"]
-        return f"Release v{args.version}", []
+            return f"{release_heading}\n\n{zh_section}", ["Chinese"]
+        return release_heading, []
 
     sections = []
     languages = []
@@ -233,9 +254,9 @@ def build_change_note(args):
         languages.append("English")
 
     if sections:
-        return "\n\n".join(sections).strip(), languages
+        return (release_heading + "\n\n" + "\n\n".join(sections)).strip(), languages
 
-    return f"Release v{args.version}", []
+    return release_heading, []
 
 
 def resolve_description_source(workspace, requested_path, fallback_name):
@@ -309,7 +330,7 @@ def main():
     prepare_parser.add_argument("--description-zh", default="workshop_zh.txt")
     prepare_parser.add_argument("--description-en", default="workshop_en.txt")
     prepare_parser.add_argument("--change-note", default="")
-    prepare_parser.add_argument("--change-note-language", default="auto")
+    prepare_parser.add_argument("--change-note-language", default="combined")
     prepare_parser.add_argument("--markdown-to-bbcode", type=bool_arg, default=True)
     prepare_parser.add_argument("--result-json", default="")
     prepare_parser.set_defaults(func=prepare)

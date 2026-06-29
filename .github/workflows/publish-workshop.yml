@@ -92,7 +92,7 @@ on:
         description: Change note source language. SteamUGC does not localize change notes; use auto, english, chinese, or combined.
         required: false
         type: string
-        default: auto
+        default: combined
       workshop_description_zh_path:
         description: Markdown or BBCode source for Chinese Workshop description. Defaults to workshop_zh.txt or the workspace file.
         required: false
