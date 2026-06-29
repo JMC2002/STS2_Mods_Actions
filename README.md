@@ -74,9 +74,9 @@ jobs:
 
 ## Steam Workshop wrapper
 
-`sts2-mod-uploader` 官方 release 同时提供 `linux-x64` 包。这个 reusable workflow 默认在 `ubuntu-latest` 下载 `ModUploader-linux-x64.zip`，准备 uploader workspace，然后执行 `ModUploader upload -w <workspace>`。
+这个 reusable workflow 默认从 `JMC2002/sts2-mod-uploader@main` 构建增强版 `ModUploader`，准备 uploader workspace，然后执行 `ModUploader upload -w <workspace>`。
 
-注意：uploader 使用 Steamworks API 初始化 Steam。GitHub-hosted runner 是否能完成 Steam 登录态取决于 Steam 环境；如果 `SteamAPI.InitEx` 失败，就需要改用能登录 Steam 的 self-hosted runner。
+注意：uploader 使用 Steamworks API 初始化 Steam。推荐使用已登录 Steam 客户端的 Windows self-hosted runner；GitHub-hosted runner 通常没有 Steam 登录态，`SteamAPI.InitEx` 很可能失败。
 
 在子 MOD 的 release wrapper 中追加一个发布 Workshop 的 job：
 
@@ -99,25 +99,29 @@ jobs:
     needs: release
     uses: JMC2002/STS2_Mods_Actions/.github/workflows/publish-workshop.yml@main
     with:
+      runs_on: '["self-hosted", "Windows", "X64", "steam", "workshop"]'
+      uploader_platform: win-x64
       dry_run: true
 ```
 
 默认约定：
 
-- uploader 下载地址：`https://github.com/megacrit/sts2-mod-uploader/releases/download/<version>/ModUploader-linux-x64.zip`
+- uploader 来源：默认 checkout 并构建 `JMC2002/sts2-mod-uploader@main`
 - workspace 路径：`.github/workshop/<VersionInfo.Name>`
 - 发布内容来源：`<MOD目录>/modPublish`
 - Workshop item ID：默认读取 workspace 下的 `mod_id.txt`
-- change note：优先从 `CHANGELOG.md` 中匹配当前版本，找不到时使用 `Release v<version>`
+- change note：从 `CHANGELOG.md` / `CHANGELOG_en.md` 中匹配当前版本，自动转换 Markdown 到 Steam BBCode 后合并提交
+- Workshop 描述：自动读取 `workshop_zh.txt` / `workshop_en.txt`，转换为 Steam BBCode 后由增强版 uploader 提交；中文描述会同时用于 `schinese` 和 `tchinese`
 
 每个子 MOD 仓库需要提交一个 workspace，例如：
 
 ```text
 .github/workshop/BetterSaveSlots/
-  content/
   image.png
   mod_id.txt
   workshop.json
+  workshop_zh.txt
+  workshop_en.txt
 ```
 
 如果想把 uploader zip 固定在这个 Actions 仓库里，也可以把 zip 放到例如 `tools/ModUploader-linux-x64.zip`，然后在 wrapper 中指定：
@@ -145,11 +149,18 @@ jobs:
     uses: JMC2002/STS2_Mods_Actions/.github/workflows/publish-workshop.yml@main
     with:
       runs_on: '["ubuntu-latest"]'
-      uploader_version: v0.1.0
+      uploader_version: v0.2.0
+      uploader_repository: JMC2002/sts2-mod-uploader
       uploader_platform: linux-x64
+      build_uploader_from_source: false
       uploader_archive_path: tools/ModUploader-linux-x64.zip
       workshop_workspace: .github/workshop/BetterSaveSlots
       workshop_id: '3747533700'
+      changelog_path: CHANGELOG.md
+      changelog_en_path: CHANGELOG_en.md
+      workshop_description_zh_path: workshop_zh.txt
+      workshop_description_en_path: workshop_en.txt
+      convert_markdown_to_bbcode: true
       dry_run: false
 ```
 

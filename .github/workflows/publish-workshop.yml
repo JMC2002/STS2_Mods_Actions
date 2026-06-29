@@ -12,12 +12,32 @@ on:
         description: sts2-mod-uploader release tag used when no local archive is configured.
         required: false
         type: string
-        default: v0.1.0
+        default: v0.2.0
+      uploader_repository:
+        description: Repository used when downloading sts2-mod-uploader release assets.
+        required: false
+        type: string
+        default: JMC2002/sts2-mod-uploader
       uploader_platform:
         description: sts2-mod-uploader release platform suffix used when no local archive is configured.
         required: false
         type: string
         default: linux-x64
+      build_uploader_from_source:
+        description: Build uploader_source_repository instead of downloading a release archive.
+        required: false
+        type: boolean
+        default: true
+      uploader_source_repository:
+        description: Repository containing the enhanced ModUploader source.
+        required: false
+        type: string
+        default: JMC2002/sts2-mod-uploader
+      uploader_source_ref:
+        description: Ref used when checking out uploader_source_repository.
+        required: false
+        type: string
+        default: main
       uploader_path:
         description: Existing ModUploader executable path on the runner. Skips archive setup when set.
         required: false
@@ -54,20 +74,50 @@ on:
         type: string
         default: ''
       changelog_path:
-        description: Changelog path used to derive the Steam Workshop change note.
+        description: Chinese changelog path used to derive the Steam Workshop change note.
         required: false
         type: string
         default: CHANGELOG.md
+      changelog_en_path:
+        description: English changelog path used to derive the Steam Workshop change note.
+        required: false
+        type: string
+        default: CHANGELOG_en.md
       change_note:
         description: Explicit Steam Workshop change note. Auto-detected from CHANGELOG.md when empty.
         required: false
         type: string
         default: ''
+      workshop_description_zh_path:
+        description: Markdown or BBCode source for Chinese Workshop description. Defaults to workshop_zh.txt or the workspace file.
+        required: false
+        type: string
+        default: workshop_zh.txt
+      workshop_description_en_path:
+        description: Markdown or BBCode source for English Workshop description. Defaults to workshop_en.txt or the workspace file.
+        required: false
+        type: string
+        default: workshop_en.txt
+      convert_markdown_to_bbcode:
+        description: Convert changelog and Workshop description Markdown to Steam BBCode.
+        required: false
+        type: boolean
+        default: true
       workshop_id:
         description: Optional Workshop item ID. Defaults to mod_id.txt in the workspace.
         required: false
         type: string
         default: ''
+      workflow_tools_repository:
+        description: Repository containing helper scripts for this reusable workflow.
+        required: false
+        type: string
+        default: JMC2002/STS2_Mods_Actions
+      workflow_tools_ref:
+        description: Ref used when checking out workflow_tools_repository.
+        required: false
+        type: string
+        default: main
       dry_run:
         description: Prepare the uploader workspace without calling ModUploader upload.
         required: false
@@ -87,19 +137,80 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout workflow tools
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.workflow_tools_repository }}
+          ref: ${{ inputs.workflow_tools_ref }}
+          path: __sts2_actions
+
       - name: Checkout uploader archive repository
-        if: ${{ !inputs.dry_run && inputs.uploader_path == '' && inputs.uploader_archive_path != '' && inputs.uploader_archive_repository != '' }}
+        if: ${{ !inputs.dry_run && inputs.uploader_path == '' && !inputs.build_uploader_from_source && inputs.uploader_archive_path != '' && inputs.uploader_archive_repository != '' }}
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.uploader_archive_repository }}
           ref: ${{ inputs.uploader_archive_ref }}
           path: __sts2_actions_uploader
 
+      - name: Checkout ModUploader source
+        if: ${{ !inputs.dry_run && inputs.uploader_path == '' && inputs.build_uploader_from_source }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.uploader_source_repository }}
+          ref: ${{ inputs.uploader_source_ref }}
+          path: __sts2_mod_uploader_source
+
+      - name: Setup .NET for ModUploader
+        if: ${{ !inputs.dry_run && inputs.uploader_path == '' && inputs.build_uploader_from_source }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build ModUploader
+        if: ${{ !inputs.dry_run && inputs.uploader_path == '' && inputs.build_uploader_from_source }}
+        shell: pwsh
+        env:
+          UPLOADER_PLATFORM: ${{ inputs.uploader_platform }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $extractDir = Join-Path $env:RUNNER_TEMP "sts2-mod-uploader"
+          $artifactsDir = Join-Path $env:RUNNER_TEMP "sts2-mod-uploader-artifacts"
+          if (Test-Path -LiteralPath $extractDir) {
+            Remove-Item -LiteralPath $extractDir -Recurse -Force
+          }
+          if (Test-Path -LiteralPath $artifactsDir) {
+            Remove-Item -LiteralPath $artifactsDir -Recurse -Force
+          }
+
+          $project = Join-Path $env:GITHUB_WORKSPACE "__sts2_mod_uploader_source/ModUploader.csproj"
+          dotnet publish $project -c Release -r $env:UPLOADER_PLATFORM -p:PublishTrimmed=true --artifacts-path $artifactsDir
+
+          $publishDir = Get-ChildItem -LiteralPath $artifactsDir -Directory -Recurse |
+            Where-Object { $_.Name -eq "release_$($env:UPLOADER_PLATFORM)" } |
+            Select-Object -First 1
+
+          if ($null -eq $publishDir) {
+            throw "Published ModUploader directory was not found under '$artifactsDir'."
+          }
+
+          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+          Get-ChildItem -LiteralPath $publishDir.FullName -Force | Copy-Item -Destination $extractDir -Recurse -Force
+
+          $linuxExecutable = Join-Path $extractDir "ModUploader"
+          if (Test-Path -LiteralPath $linuxExecutable -PathType Leaf) {
+            $chmod = Get-Command chmod -ErrorAction SilentlyContinue
+            if ($null -ne $chmod) {
+              & chmod +x $linuxExecutable
+            }
+          }
+
       - name: Prepare ModUploader
-        if: ${{ !inputs.dry_run && inputs.uploader_path == '' }}
+        if: ${{ !inputs.dry_run && inputs.uploader_path == '' && !inputs.build_uploader_from_source }}
         shell: pwsh
         env:
           UPLOADER_VERSION: ${{ inputs.uploader_version }}
+          UPLOADER_REPOSITORY: ${{ inputs.uploader_repository }}
           UPLOADER_PLATFORM: ${{ inputs.uploader_platform }}
           UPLOADER_ARCHIVE_PATH: ${{ inputs.uploader_archive_path }}
           UPLOADER_ARCHIVE_REPOSITORY: ${{ inputs.uploader_archive_repository }}
@@ -121,7 +232,7 @@ jobs:
           } else {
             $asset = "ModUploader-$($env:UPLOADER_PLATFORM).zip"
             $archivePath = Join-Path $env:RUNNER_TEMP $asset
-            $url = "https://github.com/megacrit/sts2-mod-uploader/releases/download/$($env:UPLOADER_VERSION)/$asset"
+            $url = "https://github.com/$($env:UPLOADER_REPOSITORY)/releases/download/$($env:UPLOADER_VERSION)/$asset"
             Invoke-WebRequest -Uri $url -OutFile $archivePath
           }
 
@@ -163,6 +274,11 @@ jobs:
           }
 
           "path=$uploaderPath" >> $env:GITHUB_OUTPUT
+
+      - name: Setup Python for Workshop text
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
       - name: Detect STS2 mod configuration
         id: config
@@ -238,43 +354,15 @@ jobs:
           WORKSHOP_WORKSPACE: ${{ steps.config.outputs.workshop_workspace }}
           VERSION: ${{ steps.config.outputs.version }}
           CHANGELOG_PATH: ${{ inputs.changelog_path }}
+          CHANGELOG_EN_PATH: ${{ inputs.changelog_en_path }}
           INPUT_CHANGE_NOTE: ${{ inputs.change_note }}
+          WORKSHOP_DESCRIPTION_ZH_PATH: ${{ inputs.workshop_description_zh_path }}
+          WORKSHOP_DESCRIPTION_EN_PATH: ${{ inputs.workshop_description_en_path }}
+          CONVERT_MARKDOWN_TO_BBCODE: ${{ inputs.convert_markdown_to_bbcode }}
         run: |
           $ErrorActionPreference = "Stop"
-
-          function Get-ChangelogNote([string]$path, [string]$version) {
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-              return ""
-            }
-
-            $content = Get-Content -LiteralPath $path -Raw
-            if ($null -eq $content) {
-              return ""
-            }
-
-            $escapedVersion = [Regex]::Escape($version)
-            $targetHeader = "^\s*##\s+\[v?$escapedVersion\]"
-            $anyHeader = "^\s*##\s+\["
-            $lines = $content -split "`r?`n"
-            $recording = $false
-            $extract = New-Object System.Collections.Generic.List[string]
-
-            foreach ($line in $lines) {
-              if ($recording -and $line -match $anyHeader) {
-                break
-              }
-
-              if ($recording) {
-                $extract.Add($line)
-              }
-
-              if (-not $recording -and $line -match $targetHeader) {
-                $recording = $true
-              }
-            }
-
-            return ($extract -join [Environment]::NewLine).Trim()
-          }
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $OutputEncoding = [System.Text.Encoding]::UTF8
 
           $contentDir = Join-Path $env:WORKSHOP_WORKSPACE "content"
           if (Test-Path -LiteralPath $contentDir -PathType Container) {
@@ -290,22 +378,36 @@ jobs:
             throw "workshop.json not found at '$workshopJsonPath'."
           }
 
-          $changeNote = $env:INPUT_CHANGE_NOTE
-          if ([string]::IsNullOrWhiteSpace($changeNote)) {
-            $changeNote = Get-ChangelogNote $env:CHANGELOG_PATH $env:VERSION
+          $textScript = Join-Path $env:GITHUB_WORKSPACE "__sts2_actions/scripts/steam_workshop_text.py"
+          if (-not (Test-Path -LiteralPath $textScript -PathType Leaf)) {
+            throw "Workshop text helper was not found at '$textScript'."
           }
 
-          if ([string]::IsNullOrWhiteSpace($changeNote)) {
-            $changeNote = "Release v$($env:VERSION)"
+          $env:PYTHONUTF8 = "1"
+          $resultJsonPath = Join-Path $env:RUNNER_TEMP "sts2-workshop-text-result.json"
+          $prepareArgs = @(
+            "prepare",
+            "--workspace", $env:WORKSHOP_WORKSPACE,
+            "--version", $env:VERSION,
+            "--changelog-zh", $env:CHANGELOG_PATH,
+            "--changelog-en", $env:CHANGELOG_EN_PATH,
+            "--description-zh", $env:WORKSHOP_DESCRIPTION_ZH_PATH,
+            "--description-en", $env:WORKSHOP_DESCRIPTION_EN_PATH,
+            "--markdown-to-bbcode", $env:CONVERT_MARKDOWN_TO_BBCODE,
+            "--result-json", $resultJsonPath
+          )
+
+          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_CHANGE_NOTE)) {
+            $prepareArgs += @("--change-note", $env:INPUT_CHANGE_NOTE)
           }
 
-          $workshopJson = Get-Content -LiteralPath $workshopJsonPath -Raw | ConvertFrom-Json
-          if ($workshopJson.PSObject.Properties.Name -contains "changeNote") {
-            $workshopJson.changeNote = $changeNote
-          } else {
-            $workshopJson | Add-Member -NotePropertyName changeNote -NotePropertyValue $changeNote
+          & python $textScript @prepareArgs
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
           }
-          $workshopJson | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $workshopJsonPath -Encoding utf8
+
+          $prepareResult = Get-Content -LiteralPath $resultJsonPath -Raw -Encoding utf8 | ConvertFrom-Json
+          $changeNote = [string]$prepareResult.change_note
 
           $delimiter = "EOF_$([Guid]::NewGuid().ToString('N'))"
           "change_note<<$delimiter" >> $env:GITHUB_OUTPUT
