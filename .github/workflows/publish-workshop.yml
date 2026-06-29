@@ -275,11 +275,6 @@ jobs:
 
           "path=$uploaderPath" >> $env:GITHUB_OUTPUT
 
-      - name: Setup Python for Workshop text
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
       - name: Detect STS2 mod configuration
         id: config
         shell: pwsh
@@ -383,6 +378,18 @@ jobs:
             throw "Workshop text helper was not found at '$textScript'."
           }
 
+          $pythonExe = "python"
+          $pythonArgs = @()
+          $python = Get-Command python -ErrorAction SilentlyContinue
+          if ($null -eq $python) {
+            $py = Get-Command py -ErrorAction SilentlyContinue
+            if ($null -eq $py) {
+              throw "Python was not found. Install Python 3 or the Windows py launcher on the self-hosted runner."
+            }
+            $pythonExe = "py"
+            $pythonArgs = @("-3")
+          }
+
           $env:PYTHONUTF8 = "1"
           $resultJsonPath = Join-Path $env:RUNNER_TEMP "sts2-workshop-text-result.json"
           $prepareArgs = @(
@@ -401,7 +408,7 @@ jobs:
             $prepareArgs += @("--change-note", $env:INPUT_CHANGE_NOTE)
           }
 
-          & python $textScript @prepareArgs
+          & $pythonExe @pythonArgs $textScript @prepareArgs
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
