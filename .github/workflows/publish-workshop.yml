@@ -429,6 +429,20 @@ jobs:
 
           $prepareResult = Get-Content -LiteralPath $resultJsonPath -Raw -Encoding utf8 | ConvertFrom-Json
           $changeNote = [string]$prepareResult.change_note
+          $changeNoteLanguages = @($prepareResult.change_note_languages)
+          $descriptionLanguages = @($prepareResult.description_languages)
+
+          function Format-LanguageList($languages) {
+            $items = @($languages) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+            if ($items.Count -eq 0) {
+              return "none"
+            }
+            return ($items -join ", ")
+          }
+
+          Write-Host "Workshop text prepared."
+          Write-Host "Change note languages: $(Format-LanguageList $changeNoteLanguages)"
+          Write-Host "Description languages: $(Format-LanguageList $descriptionLanguages)"
 
           $delimiter = "EOF_$([Guid]::NewGuid().ToString('N'))"
           "change_note<<$delimiter" >> $env:GITHUB_OUTPUT

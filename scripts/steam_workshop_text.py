@@ -27,10 +27,6 @@ def write_text(path, content):
     file_path.write_text(content.rstrip() + "\n", encoding="utf-8")
 
 
-def warn(message):
-    print(f"::warning::{message}", file=sys.stderr)
-
-
 def extract_changelog_section(path, version):
     content = read_text(path)
     if not content:
@@ -183,44 +179,24 @@ def maybe_convert(text, enabled):
 
 def build_change_note(args):
     if args.change_note.strip():
-        return maybe_convert(args.change_note, args.markdown_to_bbcode)
+        return maybe_convert(args.change_note, args.markdown_to_bbcode), ["Explicit input"]
 
     zh_section = maybe_convert(extract_changelog_section(args.changelog_zh, args.version), args.markdown_to_bbcode)
     en_section = maybe_convert(extract_changelog_section(args.changelog_en, args.version), args.markdown_to_bbcode)
 
     sections = []
+    languages = []
     if zh_section:
         sections.append("[h2]\u7b80\u4f53\u4e2d\u6587 / \u7e41\u9ad4\u4e2d\u6587[/h2]\n" + zh_section)
+        languages.append("Chinese")
     if en_section:
         sections.append("[h2]English[/h2]\n" + en_section)
+        languages.append("English")
 
     if sections:
-        return "\n\n".join(sections).strip()
+        return "\n\n".join(sections).strip(), languages
 
-    return f"Release v{args.version}"
-
-
-def collect_changelog_warnings(args):
-    if args.change_note.strip():
-        return []
-
-    warnings = []
-    for label, path in (
-        ("Chinese", args.changelog_zh),
-        ("English", args.changelog_en),
-    ):
-        if not path:
-            continue
-
-        changelog_path = Path(path)
-        if not changelog_path.is_file():
-            warnings.append(f"{label} changelog not found at '{path}'. This language will be omitted from the change note.")
-            continue
-
-        if not extract_changelog_section(path, args.version):
-            warnings.append(f"{label} changelog has no section for version '{args.version}'. This language will be omitted from the change note.")
-
-    return warnings
+    return f"Release v{args.version}", []
 
 
 def resolve_description_source(workspace, requested_path, fallback_name):
@@ -245,8 +221,7 @@ def prepare(args):
     if not workshop_json_path.is_file():
         raise SystemExit(f"workshop.json not found: {workshop_json_path}")
 
-    change_note = build_change_note(args)
-    warnings = collect_changelog_warnings(args)
+    change_note, change_note_languages = build_change_note(args)
     workshop_json = json.loads(workshop_json_path.read_text(encoding="utf-8"))
     workshop_json["changeNote"] = change_note
     workshop_json_path.write_text(
@@ -255,7 +230,7 @@ def prepare(args):
     )
 
     description_outputs = {}
-    missing_descriptions = []
+    description_languages = []
     description_sources = {
         "Chinese": ("workshop_zh.txt", resolve_description_source(workspace, args.description_zh, "workshop_zh.txt")),
         "English": ("workshop_en.txt", resolve_description_source(workspace, args.description_en, "workshop_en.txt")),
@@ -263,22 +238,18 @@ def prepare(args):
 
     for label, (output_name, source_path) in description_sources.items():
         if source_path is None:
-            missing_descriptions.append(label)
-            warnings.append(f"{label} Workshop description not found. No localized description file will be generated for this language.")
             continue
         converted = maybe_convert(read_text(source_path), args.markdown_to_bbcode)
         output_path = workspace / output_name
         write_text(output_path, converted)
         description_outputs[output_name] = str(output_path)
-
-    for message in warnings:
-        warn(message)
+        description_languages.append(label)
 
     result = {
         "change_note": change_note,
+        "change_note_languages": change_note_languages,
+        "description_languages": description_languages,
         "description_outputs": description_outputs,
-        "missing_descriptions": missing_descriptions,
-        "warnings": warnings,
     }
     result_json = json.dumps(result, ensure_ascii=False)
     if args.result_json:

@@ -110,8 +110,8 @@ jobs:
 - workspace 路径：`<MOD目录>/workshop`；旧的 `.github/workshop/<VersionInfo.Name>` 仍会 fallback 兼容，但新 MOD 建议使用前者
 - 发布内容来源：`<MOD目录>/modPublish`
 - Workshop item ID：默认读取 workspace 下的 `mod_id.txt`
-- change note：从 `CHANGELOG.md` / `CHANGELOG_en.md` 中匹配当前版本，自动转换 Markdown 到 Steam BBCode 后合并提交；缺少某个语言会跳过该语言并写 warning
-- Workshop 描述：自动读取 workspace 下的 `workshop_zh.txt` / `workshop_en.txt` Markdown，转换为 Steam BBCode 后由增强版 uploader 提交；中文描述会同时用于 `schinese` 和 `tchinese`，缺少某个语言会跳过该语言并写 warning
+- change note：从 `CHANGELOG.md` / `CHANGELOG_en.md` 中匹配当前版本，自动转换 Markdown 到 Steam BBCode 后合并提交；缺少某个语言会直接跳过，并在日志摘要里列出实际应用的语言
+- Workshop 描述：自动读取 workspace 下的 `workshop_zh.txt` / `workshop_en.txt` Markdown，转换为 Steam BBCode 后由增强版 uploader 提交；中文描述会同时用于 `schinese` 和 `tchinese`，缺少某个语言会直接跳过，并在日志摘要里列出实际应用的语言
 
 每个子 MOD 仓库需要提交一个 workspace，例如：
 
