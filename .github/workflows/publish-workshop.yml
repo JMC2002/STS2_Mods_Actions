@@ -59,7 +59,7 @@ on:
         type: string
         default: main
       workshop_workspace:
-        description: Workshop workspace path in the repository. Defaults to .github/workshop/<VersionInfo.Name>.
+        description: Workshop workspace path in the repository. Defaults to <MOD directory>/workshop, with legacy .github/workshop/<VersionInfo.Name> fallback.
         required: false
         type: string
         default: ''
@@ -285,9 +285,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
+          $generatedPathPattern = '[\\/](__sts2_actions|__sts2_actions_uploader|__sts2_mod_uploader_source)[\\/]'
+
           if ([string]::IsNullOrWhiteSpace($env:VERSION_INFO_PATH)) {
             $csFile = Get-ChildItem -LiteralPath $PWD -Recurse -Filter VersionInfo.cs -File |
-              Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]__sts2_actions_uploader[\\/]' } |
+              Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch $generatedPathPattern } |
               Select-Object -First 1
           } else {
             $csFile = Get-Item -LiteralPath $env:VERSION_INFO_PATH
@@ -310,7 +312,7 @@ jobs:
 
           if ([string]::IsNullOrWhiteSpace($env:INPUT_MOD_PATH)) {
             $modDir = Get-ChildItem -LiteralPath $PWD -Directory -Recurse -Depth 1 |
-              Where-Object { $_.Name -eq $modName -and $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]__sts2_actions_uploader[\\/]' } |
+              Where-Object { $_.Name -eq $modName -and $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch $generatedPathPattern } |
               Select-Object -First 1
           } else {
             $modDir = Get-Item -LiteralPath $env:INPUT_MOD_PATH
@@ -326,14 +328,26 @@ jobs:
           }
 
           if ([string]::IsNullOrWhiteSpace($env:INPUT_WORKSHOP_WORKSPACE)) {
-            $workshopWorkspace = Join-Path (Join-Path $PWD ".github/workshop") $modName
+            $preferredWorkshopWorkspace = Join-Path $modDir.FullName "workshop"
+            $legacyWorkshopWorkspace = Join-Path (Join-Path $PWD ".github/workshop") $modName
+
+            if (Test-Path -LiteralPath $preferredWorkshopWorkspace -PathType Container) {
+              $workshopWorkspace = $preferredWorkshopWorkspace
+            } elseif (Test-Path -LiteralPath $legacyWorkshopWorkspace -PathType Container) {
+              Write-Warning "Using legacy Workshop workspace '$legacyWorkshopWorkspace'. Move it to '$preferredWorkshopWorkspace' when convenient."
+              $workshopWorkspace = $legacyWorkshopWorkspace
+            } else {
+              $workshopWorkspace = $preferredWorkshopWorkspace
+            }
           } else {
             $workshopWorkspace = $env:INPUT_WORKSHOP_WORKSPACE
           }
 
           if (-not (Test-Path -LiteralPath $workshopWorkspace -PathType Container)) {
-            throw "Workshop workspace not found at '$workshopWorkspace'. Add workshop.json, image.png, and mod_id.txt under .github/workshop/$modName or pass workshop_workspace."
+            throw "Workshop workspace not found at '$workshopWorkspace'. Add workshop.json, image.png, and mod_id.txt under '$($modDir.FullName)\workshop' or pass workshop_workspace."
           }
+
+          $workshopWorkspace = (Get-Item -LiteralPath $workshopWorkspace).FullName
 
           "mod_name=$modName" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT

@@ -107,16 +107,16 @@ jobs:
 默认约定：
 
 - uploader 来源：默认 checkout 并构建 `JMC2002/sts2-mod-uploader@main`
-- workspace 路径：`.github/workshop/<VersionInfo.Name>`
+- workspace 路径：`<MOD目录>/workshop`；旧的 `.github/workshop/<VersionInfo.Name>` 仍会 fallback 兼容，但新 MOD 建议使用前者
 - 发布内容来源：`<MOD目录>/modPublish`
 - Workshop item ID：默认读取 workspace 下的 `mod_id.txt`
-- change note：从 `CHANGELOG.md` / `CHANGELOG_en.md` 中匹配当前版本，自动转换 Markdown 到 Steam BBCode 后合并提交
-- Workshop 描述：自动读取 `workshop_zh.txt` / `workshop_en.txt`，转换为 Steam BBCode 后由增强版 uploader 提交；中文描述会同时用于 `schinese` 和 `tchinese`
+- change note：从 `CHANGELOG.md` / `CHANGELOG_en.md` 中匹配当前版本，自动转换 Markdown 到 Steam BBCode 后合并提交；缺少某个语言会跳过该语言并写 warning
+- Workshop 描述：自动读取 workspace 下的 `workshop_zh.txt` / `workshop_en.txt` Markdown，转换为 Steam BBCode 后由增强版 uploader 提交；中文描述会同时用于 `schinese` 和 `tchinese`，缺少某个语言会跳过该语言并写 warning
 
 每个子 MOD 仓库需要提交一个 workspace，例如：
 
 ```text
-.github/workshop/BetterSaveSlots/
+BetterSaveSlots/workshop/
   image.png
   mod_id.txt
   workshop.json
@@ -154,7 +154,7 @@ jobs:
       uploader_platform: linux-x64
       build_uploader_from_source: false
       uploader_archive_path: tools/ModUploader-linux-x64.zip
-      workshop_workspace: .github/workshop/BetterSaveSlots
+      workshop_workspace: BetterSaveSlots/workshop
       workshop_id: '3747533700'
       changelog_path: CHANGELOG.md
       changelog_en_path: CHANGELOG_en.md

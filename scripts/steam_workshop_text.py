@@ -27,6 +27,10 @@ def write_text(path, content):
     file_path.write_text(content.rstrip() + "\n", encoding="utf-8")
 
 
+def warn(message):
+    print(f"::warning::{message}", file=sys.stderr)
+
+
 def extract_changelog_section(path, version):
     content = read_text(path)
     if not content:
@@ -196,6 +200,29 @@ def build_change_note(args):
     return f"Release v{args.version}"
 
 
+def collect_changelog_warnings(args):
+    if args.change_note.strip():
+        return []
+
+    warnings = []
+    for label, path in (
+        ("Chinese", args.changelog_zh),
+        ("English", args.changelog_en),
+    ):
+        if not path:
+            continue
+
+        changelog_path = Path(path)
+        if not changelog_path.is_file():
+            warnings.append(f"{label} changelog not found at '{path}'. This language will be omitted from the change note.")
+            continue
+
+        if not extract_changelog_section(path, args.version):
+            warnings.append(f"{label} changelog has no section for version '{args.version}'. This language will be omitted from the change note.")
+
+    return warnings
+
+
 def resolve_description_source(workspace, requested_path, fallback_name):
     if requested_path:
         requested = Path(requested_path)
@@ -219,6 +246,7 @@ def prepare(args):
         raise SystemExit(f"workshop.json not found: {workshop_json_path}")
 
     change_note = build_change_note(args)
+    warnings = collect_changelog_warnings(args)
     workshop_json = json.loads(workshop_json_path.read_text(encoding="utf-8"))
     workshop_json["changeNote"] = change_note
     workshop_json_path.write_text(
@@ -227,22 +255,30 @@ def prepare(args):
     )
 
     description_outputs = {}
+    missing_descriptions = []
     description_sources = {
-        "workshop_zh.txt": resolve_description_source(workspace, args.description_zh, "workshop_zh.txt"),
-        "workshop_en.txt": resolve_description_source(workspace, args.description_en, "workshop_en.txt"),
+        "Chinese": ("workshop_zh.txt", resolve_description_source(workspace, args.description_zh, "workshop_zh.txt")),
+        "English": ("workshop_en.txt", resolve_description_source(workspace, args.description_en, "workshop_en.txt")),
     }
 
-    for output_name, source_path in description_sources.items():
+    for label, (output_name, source_path) in description_sources.items():
         if source_path is None:
+            missing_descriptions.append(label)
+            warnings.append(f"{label} Workshop description not found. No localized description file will be generated for this language.")
             continue
         converted = maybe_convert(read_text(source_path), args.markdown_to_bbcode)
         output_path = workspace / output_name
         write_text(output_path, converted)
         description_outputs[output_name] = str(output_path)
 
+    for message in warnings:
+        warn(message)
+
     result = {
         "change_note": change_note,
         "description_outputs": description_outputs,
+        "missing_descriptions": missing_descriptions,
+        "warnings": warnings,
     }
     result_json = json.dumps(result, ensure_ascii=False)
     if args.result_json:
