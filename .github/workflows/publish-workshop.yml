@@ -160,12 +160,6 @@ jobs:
           ref: ${{ inputs.uploader_source_ref }}
           path: __sts2_mod_uploader_source
 
-      - name: Setup .NET for ModUploader
-        if: ${{ !inputs.dry_run && inputs.uploader_path == '' && inputs.build_uploader_from_source }}
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '9.0.x'
-
       - name: Build ModUploader
         if: ${{ !inputs.dry_run && inputs.uploader_path == '' && inputs.build_uploader_from_source }}
         shell: pwsh
@@ -184,6 +178,12 @@ jobs:
           }
 
           $project = Join-Path $env:GITHUB_WORKSPACE "__sts2_mod_uploader_source/ModUploader.csproj"
+          $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+          if ($null -eq $dotnet) {
+            throw "dotnet was not found. Install .NET SDK 9.x on the self-hosted runner or pass uploader_path."
+          }
+
+          dotnet --info
           dotnet publish $project -c Release -r $env:UPLOADER_PLATFORM -p:PublishTrimmed=true --artifacts-path $artifactsDir
 
           $publishDir = Get-ChildItem -LiteralPath $artifactsDir -Directory -Recurse |
