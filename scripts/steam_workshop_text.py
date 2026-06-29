@@ -177,12 +177,51 @@ def maybe_convert(text, enabled):
     return markdown_to_bbcode(text) if enabled else text.strip()
 
 
+def normalize_change_note_language(value):
+    normalized = str(value or "auto").strip().lower()
+    aliases = {
+        "auto": "auto",
+        "en": "english",
+        "eng": "english",
+        "english": "english",
+        "zh": "chinese",
+        "zhs": "chinese",
+        "schinese": "chinese",
+        "tchinese": "chinese",
+        "chinese": "chinese",
+        "combined": "combined",
+        "bilingual": "combined",
+        "all": "combined",
+    }
+    if normalized not in aliases:
+        raise SystemExit("change note language must be one of: auto, english, chinese, combined")
+    return aliases[normalized]
+
+
 def build_change_note(args):
     if args.change_note.strip():
         return maybe_convert(args.change_note, args.markdown_to_bbcode), ["Explicit input"]
 
     zh_section = maybe_convert(extract_changelog_section(args.changelog_zh, args.version), args.markdown_to_bbcode)
     en_section = maybe_convert(extract_changelog_section(args.changelog_en, args.version), args.markdown_to_bbcode)
+    mode = normalize_change_note_language(args.change_note_language)
+
+    if mode == "english":
+        if en_section:
+            return en_section, ["English"]
+        return f"Release v{args.version}", []
+
+    if mode == "chinese":
+        if zh_section:
+            return zh_section, ["Chinese"]
+        return f"Release v{args.version}", []
+
+    if mode == "auto":
+        if en_section:
+            return en_section, ["English"]
+        if zh_section:
+            return zh_section, ["Chinese"]
+        return f"Release v{args.version}", []
 
     sections = []
     languages = []
@@ -270,6 +309,7 @@ def main():
     prepare_parser.add_argument("--description-zh", default="workshop_zh.txt")
     prepare_parser.add_argument("--description-en", default="workshop_en.txt")
     prepare_parser.add_argument("--change-note", default="")
+    prepare_parser.add_argument("--change-note-language", default="auto")
     prepare_parser.add_argument("--markdown-to-bbcode", type=bool_arg, default=True)
     prepare_parser.add_argument("--result-json", default="")
     prepare_parser.set_defaults(func=prepare)

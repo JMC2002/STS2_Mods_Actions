@@ -88,6 +88,11 @@ on:
         required: false
         type: string
         default: ''
+      change_note_language:
+        description: Change note source language. SteamUGC does not localize change notes; use auto, english, chinese, or combined.
+        required: false
+        type: string
+        default: auto
       workshop_description_zh_path:
         description: Markdown or BBCode source for Chinese Workshop description. Defaults to workshop_zh.txt or the workspace file.
         required: false
@@ -365,6 +370,7 @@ jobs:
           CHANGELOG_PATH: ${{ inputs.changelog_path }}
           CHANGELOG_EN_PATH: ${{ inputs.changelog_en_path }}
           INPUT_CHANGE_NOTE: ${{ inputs.change_note }}
+          CHANGE_NOTE_LANGUAGE: ${{ inputs.change_note_language }}
           WORKSHOP_DESCRIPTION_ZH_PATH: ${{ inputs.workshop_description_zh_path }}
           WORKSHOP_DESCRIPTION_EN_PATH: ${{ inputs.workshop_description_en_path }}
           CONVERT_MARKDOWN_TO_BBCODE: ${{ inputs.convert_markdown_to_bbcode }}
@@ -414,6 +420,7 @@ jobs:
             "--changelog-en", $env:CHANGELOG_EN_PATH,
             "--description-zh", $env:WORKSHOP_DESCRIPTION_ZH_PATH,
             "--description-en", $env:WORKSHOP_DESCRIPTION_EN_PATH,
+            "--change-note-language", $env:CHANGE_NOTE_LANGUAGE,
             "--markdown-to-bbcode", $env:CONVERT_MARKDOWN_TO_BBCODE,
             "--result-json", $resultJsonPath
           )
