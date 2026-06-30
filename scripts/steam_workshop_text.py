@@ -191,7 +191,7 @@ def build_release_heading(version, date):
     title = f"v{version}"
     if date:
         title += f" - {date}"
-    return title
+    return f"[h1]{title}[/h1]"
 
 
 def normalize_change_note_language(value):
@@ -247,14 +247,14 @@ def build_change_note(args):
     sections = []
     languages = []
     if zh_section:
-        sections.append("[h2]\u7b80\u4f53\u4e2d\u6587 / \u7e41\u9ad4\u4e2d\u6587[/h2]\n" + zh_section)
+        sections.append("[h2]\u7b80\u4f53\u4e2d\u6587 / \u7e41\u9ad4\u4e2d\u6587[/h2]\n" + release_heading + "\n\n" + zh_section)
         languages.append("Chinese")
     if en_section:
-        sections.append("[h2]English[/h2]\n" + en_section)
+        sections.append("[h2]English[/h2]\n" + release_heading + "\n\n" + en_section)
         languages.append("English")
 
     if sections:
-        return (release_heading + "\n\n" + "\n\n".join(sections)).strip(), languages
+        return "\n\n".join(sections).strip(), languages
 
     return release_heading, []
 
