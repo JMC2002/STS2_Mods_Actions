@@ -191,7 +191,7 @@ def build_release_heading(version, date):
     title = f"v{version}"
     if date:
         title += f" - {date}"
-    return f"[h1]{title}[/h1]"
+    return title
 
 
 def normalize_change_note_language(value):
