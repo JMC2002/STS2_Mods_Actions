@@ -140,6 +140,8 @@ jobs:
 
 正式启用前建议先用 `dry_run: true` 跑一次，确认 workspace 的 `content` 和 `workshop.json` 更新正确后再改为 `false`。
 
+正式上传时，wrapper 会把 uploader 输出同时写到 self-hosted runner 的 `$RUNNER_WORKSPACE/_steam-workshop-logs/<run-id>-<attempt>-workshop-upload.log`，并上传同名 Actions artifact，方便排查 Steamworks 返回的模糊错误。
+
 可选参数：
 
 ```yaml

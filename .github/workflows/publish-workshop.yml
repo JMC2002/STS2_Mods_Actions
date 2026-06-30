@@ -457,6 +457,7 @@ jobs:
           $delimiter >> $env:GITHUB_OUTPUT
 
       - name: Upload to Steam Workshop
+        id: upload
         if: ${{ !inputs.dry_run }}
         shell: pwsh
         env:
@@ -465,22 +466,46 @@ jobs:
           WORKSHOP_ID: ${{ inputs.workshop_id }}
         run: |
           $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
 
           $arguments = @("upload", "--workspace", $env:WORKSHOP_WORKSPACE)
           if (-not [string]::IsNullOrWhiteSpace($env:WORKSHOP_ID)) {
             $arguments += @("--id", $env:WORKSHOP_ID)
           }
 
+          $logRoot = Join-Path $env:RUNNER_WORKSPACE "_steam-workshop-logs"
+          New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
+          $logPath = Join-Path $logRoot "$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-workshop-upload.log"
+          "log_path=$logPath" >> $env:GITHUB_OUTPUT
+
+          "Steam Workshop upload log" | Set-Content -LiteralPath $logPath -Encoding utf8
+          "Started: $((Get-Date).ToString('o'))" | Tee-Object -FilePath $logPath -Append
+          "Workspace: $env:WORKSHOP_WORKSPACE" | Tee-Object -FilePath $logPath -Append
+          "Uploader: $env:UPLOADER_PATH" | Tee-Object -FilePath $logPath -Append
+          "Arguments: $($arguments -join ' ')" | Tee-Object -FilePath $logPath -Append
+
           $uploaderDir = Split-Path -Parent $env:UPLOADER_PATH
           Push-Location -LiteralPath $uploaderDir
           try {
-            & $env:UPLOADER_PATH @arguments
-            if ($LASTEXITCODE -ne 0) {
-              exit $LASTEXITCODE
+            & $env:UPLOADER_PATH @arguments 2>&1 | Tee-Object -FilePath $logPath -Append
+            $exitCode = $LASTEXITCODE
+            "Exit code: $exitCode" | Tee-Object -FilePath $logPath -Append
+            if ($exitCode -ne 0) {
+              exit $exitCode
             }
           } finally {
             Pop-Location
           }
+
+      - name: Upload Workshop log artifact
+        if: ${{ always() && !inputs.dry_run && steps.upload.outputs.log_path != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-workshop-upload-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.upload.outputs.log_path }}
+          if-no-files-found: ignore
 
       - name: Dry run summary
         if: ${{ inputs.dry_run }}
