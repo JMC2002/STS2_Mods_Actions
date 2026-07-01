@@ -124,7 +124,7 @@ BetterSaveSlots/workshop/
   workshop_en.txt
 ```
 
-如果想把 uploader zip 固定在这个 Actions 仓库里，也可以把 zip 放到例如 `tools/ModUploader-linux-x64.zip`，然后在 wrapper 中指定：
+如果想把 uploader zip 固定在这个 Actions 仓库里，也可以把 zip 放到例如 `tools/ModUploader-win-x64.zip`，然后在 wrapper 中指定：
 
 ```yaml
 jobs:
@@ -132,7 +132,7 @@ jobs:
     needs: release
     uses: JMC2002/STS2_Mods_Actions/.github/workflows/publish-workshop.yml@main
     with:
-      uploader_archive_path: tools/ModUploader-linux-x64.zip
+      uploader_archive_path: tools/ModUploader-win-x64.zip
       dry_run: false
 ```
 
@@ -150,12 +150,12 @@ jobs:
     needs: release
     uses: JMC2002/STS2_Mods_Actions/.github/workflows/publish-workshop.yml@main
     with:
-      runs_on: '["ubuntu-latest"]'
+      runs_on: '["self-hosted", "Windows", "X64", "steam", "workshop"]'
       uploader_version: v0.2.0
       uploader_repository: JMC2002/sts2-mod-uploader
-      uploader_platform: linux-x64
+      uploader_platform: win-x64
       build_uploader_from_source: false
-      uploader_archive_path: tools/ModUploader-linux-x64.zip
+      uploader_archive_path: tools/ModUploader-win-x64.zip
       workshop_workspace: BetterSaveSlots/workshop
       workshop_id: '3747533700'
       changelog_path: CHANGELOG.md

@@ -4,10 +4,10 @@ on:
   workflow_call:
     inputs:
       runs_on:
-        description: JSON array for the runner. Use a runner that can initialize Steam.
+        description: JSON array for the runner. Use a Windows self-hosted runner that can initialize Steam.
         required: false
         type: string
-        default: '["ubuntu-latest"]'
+        default: '["self-hosted", "Windows", "X64", "steam", "workshop"]'
       uploader_version:
         description: sts2-mod-uploader release tag used when no local archive is configured.
         required: false
@@ -22,7 +22,7 @@ on:
         description: sts2-mod-uploader release platform suffix used when no local archive is configured.
         required: false
         type: string
-        default: linux-x64
+        default: win-x64
       build_uploader_from_source:
         description: Build uploader_source_repository instead of downloading a release archive.
         required: false
@@ -141,6 +141,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Verify Windows Steam runner
+        if: ${{ !inputs.dry_run }}
+        shell: pwsh
+        env:
+          RUNNER_OS_NAME: ${{ runner.os }}
+          UPLOADER_PLATFORM: ${{ inputs.uploader_platform }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ($env:RUNNER_OS_NAME -ne "Windows") {
+            throw "Steam Workshop upload requires a Windows self-hosted runner with an active Steam login. Current runner.os is '$env:RUNNER_OS_NAME'. Pass runs_on with your Steam runner labels."
+          }
+
+          if ($env:UPLOADER_PLATFORM -notlike "win-*") {
+            throw "uploader_platform must target Windows for Steam Workshop upload on this workflow. Current value is '$env:UPLOADER_PLATFORM'."
+          }
 
       - name: Checkout workflow tools
         uses: actions/checkout@v4
